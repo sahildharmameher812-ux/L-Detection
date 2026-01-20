@@ -23,6 +23,11 @@ model = None
 def load_model():
     """Load model on startup"""
     global processor, model
+    
+    # Agar pehle se loaded hai to skip kar
+    if processor is not None and model is not None:
+        return True
+    
     print("🔄 Loading model from Hugging Face...")
     MODEL_NAME = "linkanjarad/mobilenet_v2_1.0_224-plant-disease-identification"
     
@@ -38,7 +43,16 @@ def load_model():
         return True
     except Exception as e:
         print(f"❌ Error loading model: {e}")
+        import traceback
+        traceback.print_exc()
         return False
+
+# ⭐ YAHAN PE MODEL LOAD KARO - Gunicorn ke liye
+# Yeh module import hote hi run ho jayega
+print("=" * 50)
+print("🌿 Leaf Disease Detection App")
+print("=" * 50)
+load_model()
 
 @app.route('/')
 def home():
@@ -55,7 +69,14 @@ def predict():
     """Handle prediction requests"""
     global processor, model
     
+    # Debug logging add kar
+    print(f"📥 Predict request received")
+    print(f"Model loaded: {model is not None}")
+    print(f"Processor loaded: {processor is not None}")
+    print(f"Files in request: {list(request.files.keys())}")
+    
     if processor is None or model is None:
+        print("❌ Model not loaded!")
         return jsonify({
             'success': False,
             'error': 'Model not loaded. Please wait a moment and try again.'
@@ -63,6 +84,7 @@ def predict():
     
     try:
         if 'image' not in request.files:
+            print(f"❌ No 'image' key found. Available keys: {list(request.files.keys())}")
             return jsonify({
                 'success': False,
                 'error': 'No image provided'
@@ -75,6 +97,8 @@ def predict():
                 'success': False,
                 'error': 'Empty file'
             }), 400
+        
+        print(f"📷 Processing image: {image_file.filename}")
         
         # Image process kar
         image = Image.open(image_file.stream).convert('RGB')
@@ -101,6 +125,8 @@ def predict():
                 'confidence_value': confidence
             })
         
+        print(f"✅ Prediction successful: {predictions[0]['disease']}")
+        
         return jsonify({
             'success': True,
             'predictions': predictions
@@ -108,6 +134,8 @@ def predict():
         
     except Exception as e:
         print(f"❌ Prediction error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': f'Prediction failed: {str(e)}'
@@ -121,25 +149,12 @@ def health():
         'model_loaded': processor is not None and model is not None
     })
 
+# Local development ke liye (optional - Render pe nahi chalega)
 if __name__ == '__main__':
-    print("=" * 50)
-    print("🌿 Leaf Disease Detection App")
-    print("=" * 50)
-    
-    # Model load kar
-    if load_model():
-        print("\n🚀 Starting server...")
-        
-        # Production ke liye port environment variable se lo
-        port = int(os.environ.get('PORT', 5000))
-        
-        # Server start kar
-        app.run(
-            debug=False,
-            host='0.0.0.0',
-            port=port,
-            threaded=True
-        )
-    else:
-        print("\n❌ Failed to load model.")
-        print("💡 Check your internet connection and try again.")
+    port = int(os.environ.get('PORT', 5000))
+    app.run(
+        debug=True,
+        host='0.0.0.0',
+        port=port,
+        threaded=True
+    )
