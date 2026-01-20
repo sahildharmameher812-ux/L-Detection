@@ -267,6 +267,16 @@
             color: #721c24;
             border: 1px solid #dc3545;
         }
+
+        .debug-info {
+            margin-top: 15px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            font-size: 0.85em;
+            color: #666;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -295,6 +305,7 @@
 
         <div class="error" id="error"></div>
         <div class="success-message" id="success"></div>
+        <div class="debug-info" id="debugInfo"></div>
 
         <div class="results" id="results"></div>
     </div>
@@ -310,6 +321,7 @@
         const errorDiv = document.getElementById('error');
         const successDiv = document.getElementById('success');
         const statusIndicator = document.getElementById('statusIndicator');
+        const debugInfo = document.getElementById('debugInfo');
 
         let selectedFile = null;
 
@@ -350,6 +362,12 @@
                 return;
             }
 
+            // File size check (max 10MB)
+            if (file.size > 10 * 1024 * 1024) {
+                showError('File too large! Please select an image under 10MB');
+                return;
+            }
+
             selectedFile = file;
             const reader = new FileReader();
             
@@ -359,7 +377,8 @@
                 results.style.display = 'none';
                 errorDiv.style.display = 'none';
                 successDiv.style.display = 'none';
-                showSuccess(`Image loaded: ${file.name}`);
+                debugInfo.style.display = 'none';
+                showSuccess(`Image loaded: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
             };
             
             reader.onerror = () => {
@@ -378,33 +397,79 @@
             const formData = new FormData();
             formData.append('image', selectedFile);
 
+            // Debug: Log FormData contents
+            console.log('📤 Sending request...');
+            console.log('File name:', selectedFile.name);
+            console.log('File size:', selectedFile.size);
+            console.log('File type:', selectedFile.type);
+
             loading.style.display = 'block';
             results.style.display = 'none';
             errorDiv.style.display = 'none';
             successDiv.style.display = 'none';
+            debugInfo.style.display = 'none';
             predictBtn.disabled = true;
 
             try {
-                // Relative URL use kar - automatically same domain pe jayega
-                const response = await fetch('/predict', {
+                // ⭐ Absolute URL for better error tracking
+                const apiUrl = window.location.origin + '/predict';
+                console.log('🌐 Calling API:', apiUrl);
+
+                const response = await fetch(apiUrl, {
                     method: 'POST',
                     body: formData
+                    // ⚠️ No Content-Type header - browser sets it automatically for FormData
                 });
 
+                console.log('📥 Response status:', response.status);
+                console.log('📥 Response headers:', [...response.headers.entries()]);
+
+                // Try to get response text first for better debugging
+                const responseText = await response.text();
+                console.log('📥 Response body:', responseText);
+
                 if (!response.ok) {
+                    // Show debug info
+                    debugInfo.innerHTML = `
+                        <strong>Debug Info:</strong><br>
+                        Status: ${response.status} ${response.statusText}<br>
+                        URL: ${apiUrl}<br>
+                        Response: ${responseText.substring(0, 200)}
+                    `;
+                    debugInfo.style.display = 'block';
+                    
                     throw new Error(`Server error: ${response.status} ${response.statusText}`);
                 }
 
-                const data = await response.json();
+                // Parse JSON response
+                let data;
+                try {
+                    data = JSON.parse(responseText);
+                } catch (e) {
+                    console.error('JSON parse error:', e);
+                    throw new Error('Invalid response format from server');
+                }
 
                 if (data.success && data.predictions) {
+                    console.log('✅ Predictions:', data.predictions);
                     displayResults(data.predictions);
                 } else {
                     showError(data.error || 'Prediction failed. Please try again.');
                 }
             } catch (error) {
-                console.error('Error:', error);
-                showError('Failed to analyze image. Please try again or check your connection.');
+                console.error('❌ Error:', error);
+                
+                let errorMessage = 'Failed to analyze image. ';
+                
+                if (error.message.includes('Failed to fetch')) {
+                    errorMessage += 'Cannot connect to server. Please check if the server is running.';
+                } else if (error.message.includes('500')) {
+                    errorMessage += 'Server error occurred. Model might still be loading. Please wait 30 seconds and try again.';
+                } else {
+                    errorMessage += error.message;
+                }
+                
+                showError(errorMessage);
             } finally {
                 loading.style.display = 'none';
                 predictBtn.disabled = false;
@@ -447,7 +512,7 @@
             
             setTimeout(() => {
                 errorDiv.style.display = 'none';
-            }, 5000);
+            }, 8000); // 8 seconds for better readability
         }
 
         function showSuccess(message) {
@@ -466,43 +531,65 @@
             results.style.display = 'none';
             errorDiv.style.display = 'none';
             successDiv.style.display = 'none';
+            debugInfo.style.display = 'none';
         }
 
         // Check server health on page load
         async function checkServerHealth() {
             try {
-                const response = await fetch('/health');
+                const healthUrl = window.location.origin + '/health';
+                console.log('🏥 Checking server health:', healthUrl);
+                
+                const response = await fetch(healthUrl);
                 const data = await response.json();
+                
+                console.log('🏥 Health check response:', data);
                 
                 if (data.status === 'running' && data.model_loaded) {
                     console.log('✅ Server is running and model is loaded');
-                    statusIndicator.textContent = '🟢 Server Online';
+                    statusIndicator.textContent = '🟢 Server Online & Model Ready';
                     statusIndicator.className = 'status-indicator status-online';
                     statusIndicator.style.display = 'block';
                     
                     setTimeout(() => {
                         statusIndicator.style.display = 'none';
-                    }, 3000);
-                } else {
+                    }, 4000);
+                } else if (data.status === 'running') {
                     console.warn('⚠️ Server is running but model not loaded');
-                    statusIndicator.textContent = '🟡 Loading Model...';
+                    statusIndicator.textContent = '🟡 Loading Model... (Wait 30s)';
                     statusIndicator.className = 'status-indicator';
                     statusIndicator.style.background = '#fff3cd';
                     statusIndicator.style.color = '#856404';
+                    statusIndicator.style.border = '1px solid #ffc107';
                     statusIndicator.style.display = 'block';
+                    
+                    // Retry after 5 seconds
+                    setTimeout(checkServerHealth, 5000);
                 }
             } catch (error) {
                 console.error('❌ Cannot connect to server:', error);
-                statusIndicator.textContent = '🔴 Server Offline';
+                statusIndicator.textContent = '🔴 Server Offline or Starting...';
                 statusIndicator.className = 'status-indicator status-offline';
                 statusIndicator.style.display = 'block';
+                
+                // Retry after 10 seconds
+                setTimeout(checkServerHealth, 10000);
             }
         }
 
         // Check health on load
-        window.addEventListener('load', checkServerHealth);
+        window.addEventListener('load', () => {
+            console.log('🚀 Page loaded, checking server...');
+            checkServerHealth();
+        });
+
+        // Log page visibility changes
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                console.log('👀 Page visible again, rechecking health...');
+                checkServerHealth();
+            }
+        });
     </script>
 </body>
 </html>
-```
-
